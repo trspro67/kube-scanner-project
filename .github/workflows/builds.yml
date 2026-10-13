@@ -36,6 +36,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
       - name: Verify the runner architecture
         env:
           KUBESEC_EXPECTED_TARGET: ${{ matrix.os }}/${{ matrix.arch }}
@@ -93,6 +94,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
       - name: Package the CLI and its tools
         run: bash scripts/package.sh windows amd64
       - uses: actions/upload-artifact@v7
@@ -113,6 +115,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
       - name: Verify the runner architecture
         run: |
           $actual = "$(go env GOHOSTOS)/$(go env GOHOSTARCH)"
