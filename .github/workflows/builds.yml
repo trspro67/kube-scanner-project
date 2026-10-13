@@ -1,0 +1,160 @@
+name: Builds and checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: Test ${{ matrix.os }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: darwin
+            arch: amd64
+            runner: macos-15-intel
+          - os: darwin
+            arch: arm64
+            runner: macos-15
+          - os: linux
+            arch: amd64
+            runner: ubuntu-24.04
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Verify the runner architecture
+        env:
+          KUBESEC_EXPECTED_TARGET: ${{ matrix.os }}/${{ matrix.arch }}
+        run: |
+          actual="$(go env GOHOSTOS)/$(go env GOHOSTARCH)"
+          printf 'Runner: %s\n' "$actual"
+          test "$actual" = "$KUBESEC_EXPECTED_TARGET"
+      - name: Run Go tests
+        run: go test -v ./...
+      - name: Run go vet
+        run: go vet ./...
+      - name: Package the CLI and its tools
+        env:
+          KUBESEC_TARGET_OS: ${{ matrix.os }}
+          KUBESEC_TARGET_ARCH: ${{ matrix.arch }}
+        run: bash scripts/package.sh "$KUBESEC_TARGET_OS" "$KUBESEC_TARGET_ARCH"
+      - name: Extract the bundle
+        env:
+          KUBESEC_BUNDLE: kubesec-${{ matrix.os }}-${{ matrix.arch }}
+        run: unzip -q "dist/$KUBESEC_BUNDLE.zip" -d bundle
+      - name: Check packaged commands
+        working-directory: bundle/kubesec-${{ matrix.os }}-${{ matrix.arch }}
+        shell: bash
+        run: |
+          # Empty PATH for each command verifies that bundled tools are used.
+          PATH='' ./bin/kubectl version --client
+          PATH='' ./bin/trivy --version
+
+          unsafe="$(PATH='' ./kubesec scan examples/pod.yaml)"
+          printf '%s\n' "$unsafe"
+          [[ "$unsafe" == *'[HIGH]'*'Privileged mode is enabled'* ]]
+
+          safe="$(PATH='' ./kubesec scan examples/pod-safe.yaml)"
+          printf '%s\n' "$safe"
+          [[ "$safe" == *'No findings.'* ]]
+          [[ "$safe" != *'[HIGH]'* && "$safe" != *'[MEDIUM]'* ]]
+
+          image="$(PATH='' ./kubesec scan image nginx:latest)"
+          printf '%s\n' "$image" | awk '/^(Image:|Target:|Vulnerability findings:|  No known vulnerabilities)/'
+          [[ "$image" == *'Vulnerability findings:'* || "$image" == *'No known vulnerabilities reported by Trivy.'* ]]
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kubesec-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/kubesec-${{ matrix.os }}-${{ matrix.arch }}.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  package:
+    name: Build Windows bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Package the CLI and its tools
+        run: bash scripts/package.sh windows amd64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kubesec-windows-amd64
+          path: dist/kubesec-windows-amd64.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  windows:
+    name: Test on Windows AMD64
+    needs: package
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Verify the runner architecture
+        run: |
+          $actual = "$(go env GOHOSTOS)/$(go env GOHOSTARCH)"
+          Write-Output "Runner: $actual"
+          if ($actual -ne 'windows/amd64') { throw 'Expected an AMD64 Windows runner.' }
+      - name: Run Go tests
+        run: go test -v ./...
+      - name: Run go vet
+        run: go vet ./...
+      - uses: actions/download-artifact@v8
+        with:
+          name: kubesec-windows-amd64
+          path: artifact
+      - name: Extract the bundle
+        run: Expand-Archive artifact/kubesec-windows-amd64.zip -DestinationPath bundle
+      - name: Check packaged commands
+        working-directory: bundle/kubesec-windows-amd64
+        run: |
+          # Exclude preinstalled tools so the CLI must use its bundled copies.
+          $env:PATH = "$env:SystemRoot\System32"
+
+          & .\bin\kubectl.exe version --client
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\bin\trivy.exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $unsafe = & .\kubesec.exe scan examples/pod.yaml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $unsafe
+          if (($unsafe -join "`n") -notmatch '\[HIGH\].*Privileged mode is enabled') {
+            throw 'The unsafe example did not produce the expected finding.'
+          }
+
+          $safe = & .\kubesec.exe scan examples/pod-safe.yaml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $safe
+          if (($safe -join "`n") -notmatch 'No findings\.' -or ($safe -join "`n") -match '\[(HIGH|MEDIUM)\]') {
+            throw 'The safe example produced unexpected output.'
+          }
+
+          $image = & .\kubesec.exe scan image nginx:latest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $image | Select-String '^(Image:|Target:|Vulnerability findings:|  No known vulnerabilities)'
+          if (($image -join "`n") -notmatch 'Vulnerability findings:|No known vulnerabilities reported by Trivy\.') {
+            throw 'The image scan did not produce a vulnerability report.'
+          }
