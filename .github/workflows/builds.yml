@@ -3,6 +3,7 @@ name: Builds and checks
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -158,3 +159,35 @@ jobs:
           if (($image -join "`n") -notmatch 'Vulnerability findings:|No known vulnerabilities reported by Trivy\.') {
             throw 'The image scan did not produce a vulnerability report.'
           }
+
+  release:
+    name: Publish release
+    needs: [unix, windows]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: kubesec-*
+          merge-multiple: true
+          path: release
+      - name: Verify bundles and generate checksums
+        working-directory: release
+        run: |
+          for target in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 windows-amd64; do
+            test -s "kubesec-$target.zip"
+          done
+          sha256sum kubesec-*.zip > SHA256SUMS
+      - name: Publish the tagged version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KUBESEC_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          [[ "$KUBESEC_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh release create "$KUBESEC_RELEASE_TAG" release/kubesec-*.zip release/SHA256SUMS \
+            --verify-tag --title "kubesec $KUBESEC_RELEASE_TAG" \
+            --notes-file .github/release-notes.md
