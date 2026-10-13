@@ -1,0 +1,27 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "example:latest",
+  "ArtifactType": "container_image",
+  "Metadata": { "OS": { "Family": "example-os" } },
+  "Results": [
+    {
+      "Target": "example:latest (example-os 1)",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-EXAMPLE-0001",
+          "PkgName": "lib-example",
+          "InstalledVersion": "1.0",
+          "FixedVersion": "1.1",
+          "Severity": "HIGH"
+        },
+        {
+          "VulnerabilityID": "CVE-EXAMPLE-0002",
+          "PkgName": "example-utils",
+          "InstalledVersion": "2.0",
+          "Severity": "MEDIUM"
+        }
+      ]
+    },
+    { "Target": "app/package.json", "Vulnerabilities": null }
+  ]
+}

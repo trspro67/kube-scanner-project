@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: example-escalation
+  namespace: demo
+spec:
+  containers:
+    - name: web
+      image: nginx:latest
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: true
