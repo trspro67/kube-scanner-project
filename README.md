@@ -30,7 +30,7 @@ This prototype covers a small set of checks, not a full security audit.
 
 ## Development
 
-Requires Go 1.23 or newer. Source runs also need kubectl for cluster scans and
+Requires Go 1.27.2 or newer. Source runs also need kubectl for cluster scans and
 Trivy for image scans.
 
 ```sh
